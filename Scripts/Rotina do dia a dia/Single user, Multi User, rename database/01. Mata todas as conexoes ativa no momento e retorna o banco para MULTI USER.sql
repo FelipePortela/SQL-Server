@@ -6,19 +6,19 @@ GO
 DECLARE @sql nvarchar(MAX);
 SELECT @sql = ' KILL ' + CAST(session_id as varchar(5))
     FROM sys.dm_exec_sessions
-    WHERE database_id = DB_ID(N'BD_SIFAMA');
-	SET @sql = @sql + N' ALTER DATABASE BD_SIFAMA SET MULTI_USER;';
+    WHERE database_id = DB_ID(N'NomeDoBanco');
+	SET @sql = @sql + N' ALTER DATABASE nomeDobanco SET MULTI_USER;';
 EXEC sp_executesql @sql;
 GO;
 
 
 -- Execute primeiro esse..
-ALTER DATABASE [BD_SIFAMA_19062020]
+ALTER DATABASE nomeDoBanco
 SET SINGLE_USER WITH ROLLBACK IMMEDIATE
 
 -- Execute esse aqui...
-ALTER DATABASE [BD_SIFAMA_19062020] MODIFY NAME = BD_SIFAMA
+ALTER DATABASE nomeDoBanco MODIFY NAME = nomeDobanco
 
 -- depois por último, esse..
-ALTER DATABASE BD_SIFAMA
+ALTER DATABASE nomeDoBanco
 SET MULTI_USER WITH ROLLBACK IMMEDIATE
