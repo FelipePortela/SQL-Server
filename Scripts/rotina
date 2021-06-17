@@ -1,0 +1,16 @@
+declare @min int = 1, @max int, @cmd varchar(600)
+create table #logins (id int identity, [login] varchar(100))
+insert into #logins
+select 
+    [name]
+From sys.sql_logins where is_policy_checked = 0
+set @max = @@rowcount
+while @min < = @max
+begin
+    select 
+        @cmd = 'ALTER LOGIN ['+[login]+'] WITH CHECK_POLICY=ON'
+    from #logins
+    where id = @min
+    exec(@cmd)
+    set @min +=1
+end
