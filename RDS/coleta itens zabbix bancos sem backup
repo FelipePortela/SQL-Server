@@ -1,0 +1,49 @@
+-- chamada no job: exec sp_coleta_zabbix_bancos_sembackup
+USE [DBA]
+GO
+
+/****** Object:  StoredProcedure [dbo].[sp_coleta_zabbix_bancos_sembackup]    Script Date: 09/11/2022 11:57:08 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+CREATE procedure [dbo].[sp_coleta_zabbix_bancos_sembackup]  
+as
+	begin
+
+drop table if exists #rds_task_status;
+		create table #rds_task_status
+		(
+			task_id int,
+			task_type varchar(max),
+			[database_name] varchar(max),
+			[percent_complete] int,
+			[Duration_min] int,
+			lifecycle varchar(max),
+			task_info varchar(max),
+			last_updated datetime,
+			created_at datetime,
+			sw_object_arn varchar(max),
+			overwrite_s3_backup_file bit,
+			kms_nmaster_key_arn varchar(max),
+			filepath varchar(max),
+			overwrite_file bit
+		)
+
+		insert into #rds_task_status
+		exec msdb.dbo.rds_task_status;
+
+update dba_hist.dbo.itens_zabbix set Valor = (select iif(datediff(day, max(last_updated), getdate()) > 8, 1, 0) as result from #rds_task_status 
+	where sw_object_arn like '%FULL%' and lifecycle = 'SUCCESS' and task_type = 'BACKUP_DB'), 
+		Timestamp = GETDATE() where Item = 'Banco de dados sem BACKUP FULL ha mais de 8 dias'; 
+
+update dba_hist.dbo.itens_zabbix set Valor = (select iif(datediff(day, max(last_updated), getdate()) > 1, 1, 0) as result from #rds_task_status 
+	where sw_object_arn like '%DIFF%' and lifecycle = 'SUCCESS' and task_type = 'BACKUP_DB'), 
+		Timestamp = GETDATE() where Item = 'Banco de dados sem BACKUP DIFF ha mais de 1 dia'; 
+	end;
+GO
+
+
