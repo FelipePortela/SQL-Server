@@ -1,0 +1,109 @@
+-- procedure para coleta dos itens do zabbix no RDS. 
+-- chamada no job: exec sp_coleta_itens_zabbix
+
+USE [DBA]
+GO
+
+/****** Object:  StoredProcedure [dbo].[sp_coleta_itens_zabbix]    Script Date: 09/11/2022 11:54:17 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+create procedure [dbo].[sp_coleta_itens_zabbix]
+as
+begin
+
+	drop table if exists #temp_counters;
+
+	select
+		[object_name],
+		counter_name,
+		instance_name,
+		cntr_value
+	into #temp_counters
+	from sys.dm_os_performance_counters 
+	where cntr_type = 272696576
+		and [object_name] in (
+								'SQLServer:SQL Statistics'
+								,'SQLServer:Buffer Manager'
+								,'SQLServer:Databases'
+								,'SQLServer:Access Methods'
+							)
+		and counter_name in (
+								'Batch Requests/sec'
+								,'Lazy writes/sec'
+								,'Transactions/sec'
+								,'Full Scans/sec'
+								,'Index Searches/sec'
+								,'SQL Compilations/sec'
+								,'SQL Re-Compilations/sec'
+							)
+
+	drop table if exists #dm_io_virtual_file_stats;
+	select
+		*
+	into #dm_io_virtual_file_stats
+	from sys.dm_io_virtual_file_stats(null,null);
+
+	waitfor delay '00:01:00'
+
+	merge dba_hist.dbo.itens_zabbix as iz
+	using (
+			select
+				tc.counter_name
+				,tc.instance_name
+				,pc.cntr_value - tc.cntr_value [value]
+			from #temp_counters tc
+				inner join sys.dm_os_performance_counters  pc
+					on tc.[object_name] = pc.[object_name]
+						and tc.counter_name = pc.counter_name
+							and tc.instance_name = pc.instance_name
+			where pc.cntr_type = 272696576
+		) as src
+	on iz.item = src.counter_name
+		and iz.objeto = src.instance_name
+	when matched then 
+		update set iz.valor = src.[value], iz.[timestamp] = getdate()
+	when not matched then
+		insert (item, objeto, valor, [timestamp])
+		values (counter_name, instance_name, [value], getdate());
+	
+
+	merge dba_hist.dbo.itens_zabbix as iz
+	using (
+				select
+					volume_mount_point,
+					[item],
+					[valor]
+				from (
+						select
+							dovs.volume_mount_point,
+							sum((vfs.num_of_reads - vfs1.num_of_reads)) + sum((vfs.num_of_writes - vfs1.num_of_writes))  [IOPs],
+							avg(case when (vfs.num_of_reads - vfs1.num_of_reads) > 0 then (vfs.io_stall_read_ms - vfs1.io_stall_read_ms) / (vfs.num_of_reads - vfs1.num_of_reads) end) [Avg_ms_read],
+							avg(case when (vfs.num_of_writes - vfs1.num_of_writes) > 0 then (vfs.io_stall_write_ms - vfs1.io_stall_write_ms) / (vfs.num_of_writes - vfs1.num_of_writes) end) [Avg_ms_write],
+							(sum(case when (vfs.num_of_writes - vfs1.num_of_writes) > 0 then (vfs.num_of_bytes_written - vfs1.num_of_bytes_written) / (vfs.num_of_writes - vfs1.num_of_writes) end)+
+							sum(case when (vfs.num_of_reads - vfs1.num_of_reads) > 0 then (vfs.num_of_bytes_read - vfs1.num_of_bytes_read) / (vfs.num_of_reads - vfs1.num_of_reads) end))/1024 [Throughput_KB]
+						from sys.dm_io_virtual_file_stats (null,null) vfs
+							cross apply sys.dm_os_volume_stats(vfs.database_id, vfs.file_id) dovs
+							inner join #dm_io_virtual_file_stats vfs1
+								on vfs.[database_id] = vfs1.[database_id]
+									and vfs.[file_id] = vfs1.[file_id]
+						group by dovs.volume_mount_point
+					) iops
+				unpivot (valor for [item] in ([IOPs],[Avg_ms_read],[Avg_ms_write],[Throughput_KB]))upvt
+		) as src
+	on iz.item = src.item
+		and iz.objeto = src.volume_mount_point
+	when matched then 
+		update set iz.valor = src.[valor], iz.[timestamp] = getdate()
+	when not matched then
+		insert (item, objeto, valor, [timestamp])
+		values (item, volume_mount_point, valor, getdate());
+	
+end
+GO
+
+
