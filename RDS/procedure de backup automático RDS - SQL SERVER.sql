@@ -99,4 +99,8 @@ end
 
 GO
 
+-- Chamada no JOB: 
+-- exec dba.dbo.sp_backuprds @bucket = 's3//caminhodobucket', @type = 'FULL/DIFF' 
+-- no @type, escolher um dos dois.
+
 
