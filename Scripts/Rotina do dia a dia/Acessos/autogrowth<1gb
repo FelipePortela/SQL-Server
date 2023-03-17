@@ -1,0 +1,7 @@
+
+select 
+'
+ALTER DATABASE ['+d.name+'] MODIFY FILE ( NAME = N'''+m.name+''', FILEGROWTH = 1049600KB )
+'
+from sys.master_files as m inner join sys.databases as d
+	on m.database_id = d.database_id
