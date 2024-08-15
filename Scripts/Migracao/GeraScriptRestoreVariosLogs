@@ -1,0 +1,29 @@
+DECLARE @databaseName AS VARCHAR(100)
+DECLARE @restoreName AS VARCHAR(100)
+SET @databaseName = 'BD_SEI' 
+SET @restoreName = 'BD_SEI' 
+
+CREATE TABLE #dirList (
+  id int identity(1,1),
+  line nvarchar(1000)
+  )
+
+DECLARE @cmdShellStatement VARCHAR(2000)
+--Modify this file path if the backup files are not located in the standard backup directory.
+SET @cmdShellStatement = 'DIR "B:\BACKUP\namecluster$AVGSEIPRD\' + @databaseName + '\"'
+INSERT INTO #dirList (line) EXEC master..xp_cmdshell @cmdShellStatement
+SELECT SUBSTRING(line,0,21) AS 'DateTime'
+--Modify this file path if the backup files are not located in the standard backup directory.
+,'RESTORE DATABASE ' + @restoreName + ' FROM DISK = ''B:\BACKUP\namecluster$AVGSEIPRD\' + @databaseName     + '\' +   SUBSTRING(line,40,100) + ''' WITH REPLACE, NORECOVERY' as 'Script'
+FROM #dirList
+WHERE line like '%.bak'
+ORDER BY CAST(SUBSTRING(line,0,21) AS DateTime)
+
+SELECT SUBSTRING(line,0,21) AS 'DateTime'
+--Modify this file path if the backup files are not located in the standard backup directory.
+,'RESTORE LOG ' + @restoreName + ' FROM DISK = ''B:\BACKUP\namecluster$AVGSEIPRD\' + @databaseName + '\' +   SUBSTRING(line,40,100) + ''' WITH NORECOVERY' as 'Script'
+FROM #dirList
+WHERE line like '%.trn'
+ORDER BY CAST(SUBSTRING(line,0,21) AS DateTime)
+
+DROP TABLE #dirList
