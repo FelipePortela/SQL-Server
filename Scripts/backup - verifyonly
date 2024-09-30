@@ -1,0 +1,47 @@
+
+declare @cmd varchar(max)
+		,@min int = 1
+		,@max int
+		,@error bit
+		,@error_message varchar(max)
+
+if object_id('tempdb..#backups') is not null
+	drop table #backups
+
+create table #backups (bkpid int identity primary key, cmd varchar(2000))
+
+;with backups
+as (
+		select
+			row_number() over (partition by [database_name] order by backup_start_date desc) bkpid
+			,'RESTORE VERIFYONLY from disk = '''+bmf.physical_device_name+''';' [comandos]
+		from msdb.dbo.backupset bkp
+			join sys.databases db
+				on bkp.[database_name] = db.[name]
+			join msdb.dbo.backupmediafamily bmf
+				on bkp.media_set_id = bmf.media_set_id
+		where [type] = 'D' and db.state = 0 and db.database_id > 4
+)
+insert into #backups
+select 
+	Comandos
+from backups where bkpid = 1
+set @max = @@rowcount
+
+while @min <= @max
+begin	
+	select 
+		@cmd = cmd
+	from #backups
+	where bkpid = @min
+
+	begin try
+		exec master.dbo.sp_executesql @cmd
+	end try
+	begin catch
+		select @error_message = @error_message + char(10) + 'Erro backup ======================================='+error_message()	
+		set @error = 1
+	end catch
+
+	set @min+=1
+end

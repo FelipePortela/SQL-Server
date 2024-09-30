@@ -1,0 +1,1 @@
+select * from sys.fn_xe_file_target_read_file('F:\XE\DBA - Coleta Locks DeadLocks_0_131641513915280000.xel', null, null, null); 
