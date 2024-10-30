@@ -1,0 +1,654 @@
+use SFINANCEEM
+go
+
+--sp_help SALDOSTITAta
+GO
+
+BEGIN
+
+  --- INDICE
+  PRINT '##VERSAO: 3.0##'
+  SET NOCOUNT ON
+
+  --- TESTE
+  BEGIN
+    
+    PRINT ''
+    DECLARE
+     @DB        VARCHAR(256)  = 'SFINANCEEM'
+    ,@TABELA      VARCHAR(256)  = 'em01'--68659 --68744 --68809
+    ,@OBJETO      VARCHAR(256)  --= ''
+    ,@INDEX_USAGE   BIT       = 1
+    ,@INDEX_MISS    BIT       = 1
+    ,@INDEX_OPERATION BIT       = 0
+    ,@INDEX_GRID    BIT       = 0
+	,@INDEX_REBUILD_REORGANIZE BIT = 0
+    ,@SCRIPT      BIT       = 0
+    ,@LIKE        VARCHAR(500)  --= 'TITULARES_ANOMES_TITULARIDADE'
+    ,@TIPO_STATUS   VARCHAR(500)  = NULL
+    ,@PRINT       BIT       = 1
+
+    DECLARE @TB_OBJETOS   TABLE ( STRING VARCHAR(MAX) )
+
+  END
+
+  DECLARE 
+     @SQL   VARCHAR(8000) = ''
+    ,@SQL1    VARCHAR(8000) = ''
+
+  IF ( @DB IS NULL OR @DB = '') SET @DB = CONVERT(VARCHAR(500),DB_NAME(DB_ID()))
+
+  SELECT TOP 1
+    'Server: ' + 
+    CASE
+      WHEN ROLE = 1 THEN ROLE_DESC
+      WHEN ROLE = 2 THEN 'Read-Only'
+      ELSE ''
+    END
+    + ' > ' + @@SERVERNAME
+    
+    [Server]
+  FROM 
+    SYS.DM_HADR_AVAILABILITY_REPLICA_STATES (NOLOCK)
+  WHERE
+    IS_LOCAL = 1
+
+  IF @INDEX_USAGE = 1
+  BEGIN
+  
+    SELECT @SQL1 = COALESCE(@SQL1 + '''' + [STRING] + '''' + ',','') FROM @TB_OBJETOS
+    IF RIGHT(@SQL1,1) = ',' SET @SQL1 = LEFT(@SQL1,LEN(@SQL1)-1)
+    --SELECT @SQL1 RETURN
+    --IF NULLIF(@SQL1,'') IS NULL SET @SQL1 = ''
+    
+    SET @SQL = 
+    '
+      USE [' + @DB + '];
+  
+      SELECT ''INDEX - USAGE STATS'' [INDEX]
+      SELECT
+         DB_NAME(U.DATABASE_ID)   AS Banco
+        ,OBJECT_NAME(I.OBJECT_ID) AS Tabela
+        ,I.NAME           AS Indice
+    ,(SELECT TOP 1 C.NAME FROM SYS.INDEX_COLUMNS IC INNER JOIN SYS.COLUMNS C ON  IC.OBJECT_ID = C.OBJECT_ID  AND IC.COLUMN_ID = C.COLUMN_ID 
+    WHERE KEY_ORDINAL = 0 AND IC.IS_INCLUDED_COLUMN = 0 AND IC.OBJECT_ID = I.OBJECT_ID AND IC.INDEX_ID = I.INDEX_ID ) AS [Chave_Particao]
+        ,U.USER_SEEKS       AS [Pesquisas(SEEKS)]
+        ,U.USER_SCANS       AS [Varreduras(SCANS)]  
+        ,U.USER_LOOKUPS       AS [Pesquisas(LookUps)]
+        ,U.USER_UPDATES       AS [Atualizacao(Updates)]
+    
+        ,CASE
+          WHEN ( ISNULL(U.USER_SEEKS,0) + ISNULL(U.USER_SCANS,0) + ISNULL(U.USER_LOOKUPS,0) ) = 0 THEN ''Remover''
+          WHEN ( U.USER_SEEKS > ( U.USER_SCANS + U.USER_LOOKUPS) AND U.USER_LOOKUPS = 0 ) THEN ''Otimo''
+          WHEN ( U.USER_SEEKS > ( U.USER_SCANS + U.USER_LOOKUPS) AND U.USER_LOOKUPS > 0 ) THEN ''Bom''
+          WHEN ( U.USER_SCANS > ( U.USER_SEEKS + U.USER_LOOKUPS) ) THEN ''Ruim''
+          WHEN ( U.USER_LOOKUPS > ( U.USER_SEEKS + U.USER_SCANS) ) THEN ''Ruim''
+          ELSE ''''
+        END [Recomensacao]
+
+        ,CASE
+          WHEN ( DATEDIFF(DAY,(SELECT MAX(UltimoAcesso) FROM (VALUES (U.LAST_USER_SEEK),(U.LAST_USER_SCAN),(U.LAST_USER_LOOKUP)) AS UltimoAcesso(UltimoAcesso)),GETDATE()) > 0 ) THEN ''Pouco Usado ( '' + CONVERT(VARCHAR(20), DATEDIFF(DAY,(SELECT MAX(UltimoAcesso) FROM (VALUES (U.LAST_USER_SEEK),(U.LAST_USER_SCAN),(U.LAST_USER_LOOKUP)) AS UltimoAcesso(UltimoAcesso)),GETDATE()) ) + '' dia(s) atr�(s) )''
+          ELSE NULL
+        END [Periodicidade]
+
+        ,U.LAST_USER_SEEK     AS [UltimaPesquisa(Last_SEEKS)]
+        ,U.LAST_USER_SCAN     AS [UltimaVarredura(Last_SCANS)]
+        ,U.LAST_USER_LOOKUP     AS [UltimoLookUp(Last_LookUps)]
+        ,U.LAST_USER_UPDATE     AS [UltimaAtualizacao(Last_Updates)]
+        ,( SELECT MAX(UltimoAcesso) FROM (VALUES (U.LAST_USER_SEEK),(U.LAST_USER_SCAN),(U.LAST_USER_UPDATE)) AS UltimoAcesso(UltimoAcesso) ) AS UltimoAcesso
+        ,CREATE_DATE CreateDate
+        ,MODIFY_DATE ModifyDate
+        --,DATEDIFF(DAY,(SELECT MAX(UltimoAcesso) FROM (VALUES (U.LAST_USER_SEEK),(U.LAST_USER_SCAN),(U.LAST_USER_LOOKUP)) AS UltimoAcesso(UltimoAcesso)),GETDATE())
+        
+		
+		,''CREATE '' + CASE WHEN I.IS_UNIQUE = 1 THEN '' UNIQUE '' ELSE '''' END + I.TYPE_DESC COLLATE DATABASE_DEFAULT + '' INDEX ['' + I.NAME + ''] ON ['' + SCHEMA_NAME(T.SCHEMA_ID) + ''].['' + T.NAME + '']
+        (['' + STUFF( (SELECT '',['' + C.NAME + CASE WHEN IC.IS_DESCENDING_KEY = 0 THEN '']'' ELSE ''] DESC'' END FROM SYS.INDEX_COLUMNS IC INNER JOIN SYS.COLUMNS C ON  IC.OBJECT_ID = C.OBJECT_ID  AND IC.COLUMN_ID = C.COLUMN_ID WHERE KEY_ORDINAL != 0 AND IC.IS_INCLUDED_COLUMN = 0 AND IC.OBJECT_ID = I.OBJECT_ID AND IC.INDEX_ID = I.INDEX_ID FOR XML PATH('''')), 1, 2, '''')  + '')'' +
+        ISNULL('' INCLUDE ('' + STUFF(REPLACE(REPLACE(( SELECT QUOTENAME(c.name) AS [data()] FROM sys.index_columns AS ic INNER JOIN sys.columns AS c ON ic.object_id = c.object_id AND ic.column_id = c.column_id WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 1 ORDER BY ic.index_column_id FOR XML PATH ), ''<row>'', '',''), ''</row>'', ''''), 1, 2, '''') + '') '', '''') +
+        ISNULL('' WHERE '' + I.filter_definition, '''') 
+        
+		as [CreateIndex],
+
+
+        ''DROP INDEX [''+ I.name +''] ON [''+ SCHEMA_NAME(T.schema_id) +''].[''+ T.name +''];'' + CHAR(13) + CHAR(10) AS [DropIndex]        
+      FROM
+        SYS.TABLES AS T
+        INNER JOIN SYS.INDEXES AS I ON T.OBJECT_ID = I.OBJECT_ID
+        LEFT JOIN SYS.DM_DB_INDEX_USAGE_STATS AS U ON I.OBJECT_ID = U.OBJECT_ID AND I.INDEX_ID = U.INDEX_ID
+      WHERE 
+        1=1
+        AND I.INDEX_ID NOT IN (0)
+        '
+        +
+        CONVERT(VARCHAR(MAX),
+        CASE
+          WHEN @DB != '*' THEN ' AND ( U.DATABASE_ID = DB_ID(''' + @DB + ''') OR U.DATABASE_ID IS NULL ) '
+          ELSE ''
+        END)
+        +
+        CONVERT(VARCHAR(MAX),
+        CASE
+          WHEN @TABELA != '*' THEN ' AND T.OBJECT_ID = OBJECT_ID(''' + @TABELA + ''')'
+          ELSE ''
+        END)
+        +
+        CASE
+          WHEN @LIKE IS NULL THEN ''
+          ELSE 
+          CHAR(10) + ' AND I.NAME LIKE ''%' + @LIKE +  '%'' '
+        END
+        +
+        CASE
+          WHEN @TIPO_STATUS IS NULL THEN ''
+          ELSE 
+          CHAR(10) + 
+          '
+            AND CASE
+              WHEN ( ISNULL(U.USER_SEEKS,0) + ISNULL(U.USER_SCANS,0) + ISNULL(U.USER_LOOKUPS,0) ) = 0 THEN ''Remover''
+              WHEN ( U.USER_SEEKS > ( U.USER_SCANS + U.USER_LOOKUPS) AND U.USER_LOOKUPS = 0 ) THEN ''Otimo''
+              WHEN ( U.USER_SEEKS > ( U.USER_SCANS + U.USER_LOOKUPS) AND U.USER_LOOKUPS > 0 ) THEN ''Bom''
+              WHEN ( U.USER_SCANS > ( U.USER_SEEKS + U.USER_LOOKUPS) ) THEN ''Ruim''
+              WHEN ( U.USER_LOOKUPS > ( U.USER_SEEKS + U.USER_SCANS) ) THEN ''Ruim''
+              ELSE ''''
+            END = ' + @LIKE
+        END
+        +
+        '   
+      ORDER BY 5, 
+        '
+        +
+        CONVERT(VARCHAR(MAX),
+        CASE
+          WHEN @TABELA = '*' THEN 'OBJECT_NAME(I.OBJECT_ID),'
+          ELSE ''
+        END)
+        +
+        '
+        CASE
+          WHEN ( ISNULL(U.USER_SEEKS,0) + ISNULL(U.USER_SCANS,0) + ISNULL(U.USER_LOOKUPS,0) ) = 0 THEN 1
+          WHEN ( U.USER_SEEKS > ( U.USER_SCANS + U.USER_LOOKUPS) AND U.USER_LOOKUPS = 0 ) THEN 4
+          WHEN ( U.USER_SEEKS > ( U.USER_SCANS + U.USER_LOOKUPS) AND U.USER_LOOKUPS > 0 ) THEN 3
+          WHEN ( U.USER_SCANS > ( U.USER_SEEKS + U.USER_LOOKUPS) ) THEN 2
+          WHEN ( U.USER_LOOKUPS > ( U.USER_SEEKS + U.USER_SCANS) ) THEN 2
+          ELSE ''''
+        END
+          
+      --------------------------------------------------------------------------------------------------------------------
+
+    '
+    IF @PRINT = 1 PRINT @SQL --RETURN
+    EXEC(@SQL)
+
+  END
+
+  IF @INDEX_MISS = 1
+  BEGIN
+
+    SET @SQL = 
+    '
+      USE ' + QUOTENAME(@DB) + ';
+      
+      SELECT ''INDEX - MISSING'' [INDEX]
+      SELECT
+      '
+      +
+      CONVERT(VARCHAR(MAX),
+      CASE
+        WHEN @SCRIPT = 0 THEN
+        '
+           S.LAST_USER_SEEK LAST_USER_SEEK_MS
+          ,DB_NAME(DATABASE_ID) AS DB
+          ,D.STATEMENT
+          --,D.OBJECT_ID
+          ,OBJECT_NAME(D.OBJECT_ID) OBJECTNAME
+          ,D.EQUALITY_COLUMNS
+          ,D.INEQUALITY_COLUMNS
+          ,D.INCLUDED_COLUMNS   
+          ,S.AVG_USER_IMPACT
+          ,''CREATE INDEX [missing_index_'' + CONVERT (VARCHAR(MAX), g.index_group_handle) + ''_'' + CONVERT (VARCHAR(MAX), d.index_handle) + ''_'' + LEFT(PARSENAME(d.statement, 1), 32) + '']'' + '' ON '' + d.statement + '' ('' + ISNULL(d.equality_columns, '''') + CASE WHEN d.equality_columns IS NOT NULL AND d.inequality_columns IS NOT NULL THEN '','' ELSE '''' END + ISNULL(d.inequality_columns, '''') + '')'' + ISNULL('' INCLUDE ('' + d.included_columns + '')'', '''') AS CREATE_INDEX_STATEMENT
+          ,s.avg_total_user_cost * ( s.avg_user_impact / 100.0 ) * ( s.user_seeks + s.user_scans ) AS IMPROVEMENT_MEASURE
+          ,unique_compiles
+          ,user_seeks
+          ,user_scans
+          ,last_user_seek
+          ,last_user_scan
+        '
+        ELSE '''CREATE INDEX [missing_index_'' + CONVERT (VARCHAR(MAX), g.index_group_handle) + ''_'' + CONVERT (VARCHAR(MAX), d.index_handle) + ''_'' + LEFT(PARSENAME(d.statement, 1), 32) + '']'' + '' ON '' + d.statement + '' ('' + ISNULL(d.equality_columns, '''') + CASE WHEN d.equality_columns IS NOT NULL AND d.inequality_columns IS NOT NULL THEN '','' ELSE '''' END + ISNULL(d.inequality_columns, '''') + '')'' + ISNULL('' INCLUDE ('' + d.included_columns + '')'', '''') AS CREATE_INDEX_STATEMENT'
+      END)
+      +
+      '
+      FROM 
+        SYS.DM_DB_MISSING_INDEX_GROUP_STATS AS S (NOLOCK)
+        INNER JOIN SYS.DM_DB_MISSING_INDEX_GROUPS AS G (NOLOCK) ON (S.GROUP_HANDLE = G.INDEX_GROUP_HANDLE)
+        INNER JOIN SYS.DM_DB_MISSING_INDEX_DETAILS AS D (NOLOCK) ON (G.INDEX_HANDLE = D.INDEX_HANDLE)
+      WHERE
+        1=1
+        '
+        +
+        CONVERT(VARCHAR(MAX),
+        CASE
+          WHEN @DB != '*' THEN ' AND ( DATABASE_ID = DB_ID(''' + @DB + ''') OR DATABASE_ID IS NULL ) '
+          ELSE ''
+        END)      
+        +
+        CONVERT(VARCHAR(MAX),
+        CASE
+          WHEN @TABELA != '*' THEN ' AND D.OBJECT_ID = OBJECT_ID(''' + @TABELA + ''') '
+          ELSE ''
+        END)
+        +
+        '   
+        AND s.AVG_TOTAL_USER_COST * ( s.AVG_USER_IMPACT / 100.0 ) * ( s.USER_SEEKS + s.USER_SCANS ) > 50
+      ORDER BY
+        '
+        +
+        CONVERT(VARCHAR(MAX),
+        CASE
+          WHEN @OBJETO = '*' THEN 'OBJECT_NAME(D.OBJECT_ID),'
+          ELSE ''
+        END)
+        +
+        '
+        AVG_USER_IMPACT DESC
+        --s.AVG_TOTAL_USER_COST * s.AVG_USER_IMPACT * ( s.USER_SEEKS + s.USER_SCANS ) DESC
+      
+      --------------------------------------------------------------------------------------------------------------------
+
+    '
+    
+    IF @PRINT = 1 PRINT @SQL --RETURN
+    EXEC(@SQL)
+  
+  END
+
+  IF @INDEX_OPERATION = 1
+  BEGIN
+
+    SET @SQL = 
+    '
+      USE ' + QUOTENAME(@DB) + ';
+      
+      SELECT ''INDEX - OPERATION STATS'' [INDEX]
+      SELECT
+          DB_NAME(DATABASE_ID)          AS Banco
+        ,OBJECT_NAME(O.OBJECT_ID, DATABASE_ID)  AS Tabela
+        ,I.NAME                 AS [Index]
+        ,O.*
+      FROM 
+        SYS.DM_DB_INDEX_OPERATIONAL_STATS(DB_ID(''' + @DB + '''), OBJECT_ID(''' + @OBJETO + '''), NULL, NULL) O
+        LEFT JOIN SYS.INDEXES I ON O.INDEX_ID = I.INDEX_ID AND O.OBJECT_ID = I.OBJECT_ID
+      ORDER BY
+        LEAF_INSERT_COUNT DESC, LEAF_UPDATE_COUNT DESC, LEAF_DELETE_COUNT DESC
+      
+      --------------------------------------------------------------------------------------------------------------------
+
+    '
+    
+    IF @PRINT = 1 PRINT @SQL --RETURN
+    EXEC(@SQL)
+  
+  END
+
+  IF @INDEX_GRID = 1
+  BEGIN
+
+    SET @SQL = 
+    '
+      USE ' + QUOTENAME(@DB) + ';
+      
+      SELECT ''INDEX - GRID'' [INDEX]
+      select 
+        object_name(i.object_id) ''Tabela'',
+        i.name ''Index'',
+        c.name ''Coluna'',
+        ic.index_column_id,    
+        ic.key_ordinal,
+        ic.is_included_column,
+        ic.is_descending_key
+      from 
+        sys.indexes i
+        join sys.index_columns ic on (i.object_id = ic.object_id and i.index_id = ic.index_id)
+        join sys.columns c on (c.object_id = ic.object_id and c.column_id = ic.column_id)
+      where object_name(I.object_id) in (''' + @TABELA + ''') AND KEY_ORDINAL != 0
+    '
+    +
+        CASE
+          WHEN @LIKE IS NULL THEN ''
+          ELSE 
+          CHAR(10) + ' AND i.name LIKE ''%' + @LIKE +  '%'' '
+        END
+        +
+    '
+        ORDER BY object_name(i.object_id), i.name, ic.is_included_column , ic.key_ordinal;
+      
+      --------------------------------------------------------------------------------------------------------------------
+
+    '
+    
+    IF @PRINT = 1 PRINT @SQL --RETURN
+    EXEC(@SQL)
+
+  END
+
+  IF @INDEX_REBUILD_REORGANIZE = 1
+  BEGIN
+
+    SET @SQL = 
+    '
+      USE ' + QUOTENAME(@DB) + ';
+
+		SELECT ''INDEX - REBUILD OR REORGANIZE'' [INDEX]
+		SELECT OBJECT_NAME(IND.OBJECT_ID) AS TABLENAME, 
+		IND.NAME AS INDEXNAME, INDEXSTATS.INDEX_TYPE_DESC AS INDEXTYPE, 
+		INDEXSTATS.AVG_FRAGMENTATION_IN_PERCENT,
+		ISNULL(''ALTER INDEX '' + QUOTENAME(IND.NAME)  + '' ON '' +QUOTENAME(OBJECT_NAME(IND.OBJECT_ID)) + 
+		CASE    WHEN INDEXSTATS.AVG_FRAGMENTATION_IN_PERCENT>30 THEN '' REBUILD '' 
+				WHEN INDEXSTATS.AVG_FRAGMENTATION_IN_PERCENT>=5 THEN '' REORGANIZE''
+				ELSE NULL END, ''N/A'') AS [SQLQUERY]  -- IF <5 NOT REQUIRED, SO NO QUERY NEEDED
+		FROM SYS.DM_DB_INDEX_PHYSICAL_STATS(DB_ID(), OBJECT_ID(''' + @TABELA + '''), NULL, NULL, NULL) INDEXSTATS 
+		INNER JOIN SYS.INDEXES IND ON IND.OBJECT_ID = INDEXSTATS.OBJECT_ID 
+			AND IND.INDEX_ID = INDEXSTATS.INDEX_ID 
+		WHERE IND.NAME IS NOT NULL
+		AND IND.OBJECT_ID = OBJECT_ID(''' + @TABELA + ''')
+		--AND IND.NAME IN ( ''TRANSSIS_SALDO'', ''IX_TRANSIS_CODEVENTO'' )
+		'
+		+
+			CASE
+			  WHEN @LIKE IS NULL THEN ''
+			  ELSE 
+			  CHAR(10) + ' IND.NAME LIKE ''%' + @LIKE +  '%'' '
+			END
+			+
+		'
+		ORDER BY INDEXSTATS.AVG_FRAGMENTATION_IN_PERCENT DESC
+      
+      --------------------------------------------------------------------------------------------------------------------
+
+    '
+    
+    IF @PRINT = 1 PRINT @SQL --RETURN
+    EXEC(@SQL)
+
+	if 0 = 1
+	begin
+		
+		SELECT s.name as [schema], t.name as [table]
+ 
+		-- Detalhes do índice
+		, i.[type_desc], i.[is_primary_key], i.[is_unique], i.[is_unique_constraint]
+		, ISNULL(i.name, '') AS [index]
+		, ISNULL(SUBSTRING(c.[indexed], 0, LEN(c.[indexed])), '') AS [indexed]
+		, ISNULL(SUBSTRING(c.[included], 0, LEN(c.[included])), '') AS [included]
+ 
+		-- Filtro utilizado pelo índice
+		, ISNULL(i.filter_definition, '') AS [filtered]
+ 
+		FROM sys.schemas s
+		INNER JOIN sys.tables t
+		ON s.[schema_id] = t.[schema_id]
+		INNER JOIN sys.indexes i
+		ON t.[object_id] = i.[object_id]
+ 
+		-- Relação de colunas que formam o índice
+		CROSS APPLY (
+			SELECT (
+				SELECT c.name + ', '
+				FROM sys.columns c
+				INNER JOIN sys.index_columns ic
+				ON c.[object_id] = ic.[object_id]
+				AND c.[column_id] = ic.[column_id]
+				WHERE t.[object_id] = c.[object_id]
+				AND ic.[index_id] = i.[index_id]
+				AND ic.[is_included_column] = 0
+				ORDER BY [key_ordinal]
+				FOR XML PATH('')
+			) AS [indexed]
+			,(
+				SELECT c.name + ', '
+				FROM sys.columns c
+				INNER JOIN sys.index_columns ic
+				ON c.[object_id] = ic.[object_id]
+				AND c.[column_id] = ic.[column_id]
+				WHERE t.[object_id] = c.[object_id]
+				AND ic.[index_id] = i.[index_id]
+				AND ic.[is_included_column] = 1
+				ORDER BY [key_ordinal]
+				FOR XML PATH('')
+			) AS [included]
+		) AS c
+		--WHERE t.name = 'PARAMETROS' --INSERIR FILTRO DE TABELA
+		ORDER BY [schema], [table]
+
+	end
+
+  END
+
+END
+  
+--EXEC sys.sp_helpindex @objname = N'movto'
+
+
+PRINT ''
+/*
+
+
+SELECT 
+' CREATE ' + CASE WHEN I.is_unique = 1 THEN ' UNIQUE ' ELSE '' END  + I.type_desc COLLATE DATABASE_DEFAULT +' INDEX ' +   
+I.name  + ' ON ' + Schema_name(T.Schema_id)+'.'+T.name + ' ( ' + KeyColumns + ' )  ' + 
+ISNULL(' INCLUDE('+IncludedColumns+' )','') + ISNULL(' WHERE '+I.Filter_definition,'') + ' WITH(' + 
+CASE WHEN I.is_padded = 1 THEN 'PAD_INDEX = ON' ELSE 'PAD_INDEX = OFF' END + ','  + 
+'FILLFACTOR = '+CONVERT(CHAR(5),CASE WHEN I.Fill_factor = 0 THEN 100 ELSE I.Fill_factor END) + ',' + 'SORT_IN_TEMPDB = OFF'  + ','  + 
+CASE WHEN I.ignore_dup_key = 1 THEN 'IGNORE_DUP_KEY = ON' ELSE 'IGNORE_DUP_KEY = OFF' END + ','  + 
+CASE WHEN ST.no_recompute = 0 THEN 'STATISTICS_NORECOMPUTE = OFF' ELSE 'STATISTICS_NORECOMPUTE = ON' END + ',' + 'DROP_EXISTING = ON'  + ',' + 'ONLINE = OFF'  + ','  + 
+CASE WHEN I.allow_row_locks = 1 THEN 'ALLOW_ROW_LOCKS = ON' ELSE 'ALLOW_ROW_LOCKS = OFF' END + ','  + 
+CASE WHEN I.allow_page_locks = 1 THEN 'ALLOW_PAGE_LOCKS = ON' ELSE 'ALLOW_PAGE_LOCKS = OFF' END  + ' ) ON ' + QUOTENAME(DS.name) + 
+'DATA_COMPRESSION = ' + DATA_COMPRESSION_DESC + ','  + 
+ISNULL(CASE WHEN DS.TYPE = 'FG' THEN '' WHEN DS.TYPE = 'PS' THEN
+(SELECT TOP 1 '(' + QUOTENAME(C.NAME) + ')' FROM SYS.INDEX_COLUMNS IC INNER JOIN SYS.COLUMNS C ON  IC.OBJECT_ID = C.OBJECT_ID  AND IC.COLUMN_ID = C.COLUMN_ID 
+WHERE partition_ordinal = 1 AND IC.IS_INCLUDED_COLUMN = 0 AND IC.OBJECT_ID = I.OBJECT_ID AND IC.INDEX_ID = I.INDEX_ID)
+ELSE '' END,'') AS [CreateIndexScript] 
+FROM sys.indexes I JOIN sys.tables T ON T.Object_id = I.Object_id JOIN sys.sysindexes SI ON I.Object_id = SI.id AND I.index_id = SI.indid   
+JOIN (SELECT * FROM ( SELECT IC2.object_id , IC2.index_id , STUFF((SELECT ' , ' + C.name + CASE WHEN MAX(CONVERT(INT,IC1.is_descending_key)) = 1 THEN ' DESC ' ELSE ' ASC ' END 
+FROM sys.index_columns IC1 JOIN Sys.columns C ON C.object_id = IC1.object_id AND C.column_id = IC1.column_id AND IC1.is_included_column = 0  
+WHERE IC1.object_id = IC2.object_id AND IC1.index_id = IC2.index_id GROUP BY IC1.object_id,C.name,index_id
+ORDER BY MAX(IC1.key_ordinal) FOR XML PATH('')), 1, 2, '') KeyColumns   
+FROM sys.index_columns IC2 GROUP BY IC2.object_id ,IC2.index_id) tmp3 )tmp4 ON I.object_id = tmp4.object_id AND I.Index_id = tmp4.index_id  
+JOIN sys.stats ST ON ST.object_id = I.object_id AND ST.stats_id = I.index_id   
+JOIN sys.data_spaces DS ON I.data_space_id=DS.data_space_id LEFT JOIN (SELECT * FROM ( SELECT IC2.object_id , IC2.index_id, STUFF((SELECT ' , ' + C.name  
+FROM sys.index_columns IC1 JOIN Sys.columns C ON C.object_id = IC1.object_id AND C.column_id = IC1.column_id AND IC1.is_included_column = 1   
+WHERE IC1.object_id = IC2.object_id AND IC1.index_id = IC2.index_id GROUP BY IC1.object_id,C.name,index_id FOR XML PATH('')), 1, 2, '') IncludedColumns    
+FROM sys.index_columns IC2 GROUP BY IC2.object_id ,IC2.index_id) tmp1 WHERE IncludedColumns IS NOT NULL ) tmp2 ON tmp2.object_id = I.object_id AND tmp2.index_id = I.index_id 
+left JOIN sys.filegroups FG ON I.data_space_id=FG.data_space_id
+left join sys.partitions pt on pt.object_id = t.object_id and pt.index_id = i.index_id AND partition_number = 1
+WHERE I.is_primary_key = 0 AND I.is_unique_constraint = 0 --and T.name = 'TRANSACOES_SPB' AND i.name = 'IDX_TRAN_SPB_12'
+
+
+
+
+
+
+ALTER INDEX ALL ON HumanResources.Employee
+REORGANIZE ;
+GO
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+select object_name(i.object_id) 'Tabela',
+         i.name 'Index',
+         c.name 'Coluna',
+         ic.index_column_id,    
+         ic.key_ordinal,
+         ic.is_included_column,
+         ic.is_descending_key
+         from sys.indexes i
+              join sys.index_columns ic on (i.object_id = ic.object_id and i.index_id = ic.index_id)
+             join sys.columns c on (c.object_id = ic.object_id and c.column_id = ic.column_id)
+         where object_name(I.object_id) in ('LOG_USUARIO')
+             ORDER BY object_name(i.object_id), i.name, ic.is_included_column , ic.key_ordinal;
+Go
+
+*/
+
+
+
+/*
+
+USE DBA
+
+DECLARE
+ @DB        VARCHAR(256)  = NULL
+,@OBJETO      VARCHAR(256)  = NULL
+
+DECLARE CR_OBJ CURSOR FOR
+SELECT --TOP 1
+  DB, TABELA
+FROM
+(
+  SELECT 0 ID, 'AB_INFOBANC' DB, NAME TABELA FROM AB_INFOBANC.SYS.TABLES WHERE NAME IN ('AGENCIAS','BANCO_AGENCIAS','BANCOS','PESSOAS','CLIENTES')
+  UNION ALL
+  SELECT 1 ID, 'AGENCIAW' DB, NAME FROM AGENCIAW.SYS.TABLES WHERE NAME IN ('EVENTOS','MOVTOIDENT','TRANSACOES_SPB','LOG_TRANSFERENCIAS_CC','MOVTO_PROVISORIO','LOGCONVENIOS_INTERNET')
+) TB 
+ORDER BY ID, TABELA
+
+OPEN CR_OBJ
+FETCH NEXT FROM CR_OBJ INTO @DB, @OBJETO
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+
+  EXEC DBA..SP_STATISTICS_INDEX @DB, @OBJETO
+
+  FETCH NEXT FROM CR_OBJ INTO @DB, @OBJETO
+END
+
+CLOSE CR_OBJ
+DEALLOCATE CR_OBJ
+
+
+--EXEC SP_STATISTICS_INDEX 'AGENCIAW', 'MOVTO'
+
+
+
+
+
+    
+    ,'CREATE ' + CASE WHEN I.IS_UNIQUE = 1 THEN ' UNIQUE ' ELSE '' END + I.TYPE_DESC COLLATE DATABASE_DEFAULT + ' INDEX [' + I.NAME + '] ON [' + SCHEMA_NAME(T.SCHEMA_ID) + '].[' + T.NAME + ']
+    (' + STUFF( (SELECT ', [' + C.NAME + CASE WHEN IC.IS_DESCENDING_KEY = 0 THEN '] ' ELSE '] DESC' END FROM SYS.INDEX_COLUMNS IC INNER JOIN SYS.COLUMNS C ON  IC.OBJECT_ID = C.OBJECT_ID  AND IC.COLUMN_ID = C.COLUMN_ID WHERE IC.IS_INCLUDED_COLUMN = 0 AND IC.OBJECT_ID = I.OBJECT_ID AND IC.INDEX_ID = I.INDEX_ID FOR XML PATH('')), 1, 2, '')  + ') ' +
+        ISNULL(' INCLUDE (' + STUFF(REPLACE(REPLACE(( SELECT QUOTENAME(c.name) AS [data()] FROM sys.index_columns AS ic INNER JOIN sys.columns AS c ON ic.object_id = c.object_id AND ic.column_id = c.column_id WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 1 ORDER BY ic.index_column_id FOR XML PATH ), '<row>', ','), '</row>', ''), 1, 2, '') + ') ', '') +
+        ISNULL(' WHERE ' + I.filter_definition, '') + 
+        'WITH (PAD_INDEX = ' + CASE WHEN I.is_padded = 1 THEN 'ON' ELSE 'OFF' END + 
+        --', STATISTICS_NORECOMPUTE = ' + CASE WHEN ST.no_recompute = 0 THEN 'OFF' ELSE 'ON' END + 
+        ', SORT_IN_TEMPDB = OFF' + 
+        ', FILLFACTOR = ' + CONVERT(VARCHAR(5), CASE WHEN I.fill_factor = 0 THEN 100 ELSE I.fill_factor END) +
+        ', IGNORE_DUP_KEY = ' + CASE WHEN I.ignore_dup_key = 1 THEN 'ON' ELSE 'OFF' END +      
+        ', ONLINE = OFF' + 
+        ', ALLOW_ROW_LOCKS = ' + CASE WHEN I.allow_row_locks = 1 THEN 'ON' ELSE 'OFF' END + 
+        ', ALLOW_PAGE_LOCKS = ' + CASE WHEN I.allow_page_locks = 1 THEN 'ON' ELSE 'OFF' END + 
+        ') ON [' + DB_NAME(U.DATABASE_ID) + '];' + CHAR(13) + CHAR(10) + 'GO' as [CreateIndex],
+        'DROP INDEX ['+ I.name +'] ON ['+ SCHEMA_NAME(T.schema_id) +'].['+ T.name +'];' + CHAR(13) + CHAR(10) + 'GO' AS [DropIndex]
+        
+    --,STUFF(REPLACE(REPLACE((
+    --  SELECT QUOTENAME(c.name) + CASE WHEN ic.is_descending_key = 1 THEN ' DESC' ELSE '' END AS [data()]
+    --  FROM sys.index_columns AS ic
+    --  INNER JOIN sys.columns AS c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+    --  WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
+    --  ORDER BY ic.key_ordinal
+    --  FOR XML PATH
+    --), '<row>', ', '), '</row>', ''), 1, 2, '') AS KeyColumns
+    --,STUFF(REPLACE(REPLACE((
+    --  SELECT QUOTENAME(c.name) AS [data()]
+    --  FROM sys.index_columns AS ic
+    --  INNER JOIN sys.columns AS c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+    --  WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 1
+    --  ORDER BY ic.index_column_id
+    --  FOR XML PATH
+    --), '<row>', ', '), '</row>', ''), 1, 2, '') AS IncludedColumns
+
+
+
+
+
+
+
+----Autbank Projetos e Consultoria
+----LIsta indices na base de dados
+--- https://sqlfromhell.wordpress.com/2011/08/23/relacionando-as-colunas-de-cada-indice-do-sql-server/
+USE AGENCIAW
+GO
+SELECT DB_NAME() banco,
+s.name as [schema], t.name as [table]
+ 
+-- Detalhes do índice
+, i.[type_desc], i.[is_primary_key], i.[is_unique], i.[is_unique_constraint]
+, ISNULL(i.name, '') AS [index]
+, ISNULL(SUBSTRING(c.[indexed], 0, LEN(c.[indexed])), '') AS [indexed]
+, ISNULL(SUBSTRING(c.[included], 0, LEN(c.[included])), '') AS [included]
+ 
+-- Filtro utilizado pelo índice
+, ISNULL(i.filter_definition, '') AS [filtered]
+ 
+FROM sys.schemas s
+INNER JOIN sys.tables t
+ON s.[schema_id] = t.[schema_id]
+INNER JOIN sys.indexes i
+ON t.[object_id] = i.[object_id]
+ 
+-- Relação de colunas que formam o índice
+CROSS APPLY (
+    SELECT (
+        SELECT c.name + ', '
+        FROM sys.columns c
+        INNER JOIN sys.index_columns ic
+        ON c.[object_id] = ic.[object_id]
+        AND c.[column_id] = ic.[column_id]
+        WHERE t.[object_id] = c.[object_id]
+        AND ic.[index_id] = i.[index_id]
+        AND ic.[is_included_column] = 0
+    AND KEY_ORDINAL != 0
+        ORDER BY [key_ordinal]
+        FOR XML PATH('')
+    ) AS [indexed]
+    ,(
+        SELECT c.name + ', '
+        FROM sys.columns c
+        INNER JOIN sys.index_columns ic
+        ON c.[object_id] = ic.[object_id]
+        AND c.[column_id] = ic.[column_id]
+        WHERE t.[object_id] = c.[object_id]
+        AND ic.[index_id] = i.[index_id]
+        AND ic.[is_included_column] = 1
+    AND KEY_ORDINAL != 0
+        ORDER BY [key_ordinal]
+        FOR XML PATH('')
+    ) AS [included]
+) AS c
+WHERE t.name =  'TRANSACOES_SPB'
+
+ORDER BY [schema], [table]
+
+
+
+
+
+
+  
+
+*/
+
+
+
+
+
+
+--select @@SERVERNAME
