@@ -12,4 +12,4 @@ SET @SQL = LEFT(@SQL, LEN(@SQL) - 10); -- Remove o último 'UNION ALL'
 
 EXEC sp_executesql @SQL;
 
-$[?(@.dbname=='SQLSACDADOS')].LogFileSizeMB.first()
+$[?(@.dbname=='{#DBNAME}')].LogFileSizeMB.first()
