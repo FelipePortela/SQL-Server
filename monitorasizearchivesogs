@@ -1,0 +1,13 @@
+DECLARE @SQL NVARCHAR(MAX);
+
+SET @SQL = '';
+
+SELECT @SQL = @SQL + 'SELECT ''' + name + ''' AS dbname, 
+                             total_log_size_in_bytes / 1024 AS LogFileSizeKB 
+                      FROM ' + QUOTENAME(name) + '.sys.dm_db_log_space_usage UNION ALL '
+FROM sys.databases
+WHERE state_desc = 'ONLINE' AND database_id > 4;
+
+SET @SQL = LEFT(@SQL, LEN(@SQL) - 10); -- Remove o último 'UNION ALL'
+
+EXEC sp_executesql @SQL;
