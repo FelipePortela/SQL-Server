@@ -1,0 +1,39 @@
+DECLARE @Diretorio NVARCHAR(MAX) = 'H:\BACKUP\BD_MONITRIIP_LOG_1304\';
+DECLARE @Comando NVARCHAR(MAX);
+DECLARE @Arquivo NVARCHAR(255);
+
+-- Cria uma tabela temporária para armazenar os nomes dos arquivos
+CREATE TABLE #ArquivosBackup (NomeArquivo NVARCHAR(255));
+
+-- Popula a tabela com os nomes dos arquivos de log (.trn) no diretório
+INSERT INTO #ArquivosBackup (NomeArquivo)
+EXEC xp_cmdshell 'dir H:\BACKUP\BD_MONITRIIP_LOG_1304\*.trn /b';
+
+-- Remove entradas nulas ou inválidas
+DELETE FROM #ArquivosBackup WHERE NomeArquivo IS NULL;
+
+-- Cria os comandos de restauração
+DECLARE CursorArquivos CURSOR FOR
+SELECT NomeArquivo FROM #ArquivosBackup;
+
+OPEN CursorArquivos;
+
+FETCH NEXT FROM CursorArquivos INTO @Arquivo;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @Comando = 
+        'RESTORE LOG BD_MONITRIIP_MONITORAMENTO ' +
+        'FROM DISK = ''' + @Diretorio + @Arquivo + ''' ' +
+        'WITH NORECOVERY;';
+    
+    PRINT @Comando; -- Exibe o comando. Substitua por EXEC sp_executesql @Comando para executá-lo.
+    
+    FETCH NEXT FROM CursorArquivos INTO @Arquivo;
+END
+
+CLOSE CursorArquivos;
+DEALLOCATE CursorArquivos;
+
+-- Limpa a tabela temporária
+DROP TABLE #ArquivosBackup;
